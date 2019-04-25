@@ -1,2 +1,4 @@
 # eepromProgrammer
-uploader program for arduino-based EEPROM programmer
+tools for loading data onto 64kbit ROMs with arduino
+
+includes arduino firmwares, client app, and a C program for preshuffling address bits

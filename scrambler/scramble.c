@@ -16,7 +16,12 @@ int scrambleNum(int raw) {
 
 int main(int argc, char** argv) {
 
+	if(argc == 0) {
+		return 0;
+	}
+	
 	if(argc < 3) {
+		printf("usage: %s infile outfile\n", argv[0]);
 		return 0;
 	}
 	

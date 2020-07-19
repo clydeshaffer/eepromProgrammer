@@ -9,6 +9,8 @@ if(process.argv[4]) {
 	blockSize = parseInt(process.argv[4]);
 }
 
+var verbose = 0;
+
 function OpenSerialAndSend(buffer, numBytes) {
 	SerialPort.list(function(err, ports) {
 		var portExists = ports.some(port => port.comName == targetPort);
@@ -25,19 +27,27 @@ function OpenSerialAndSend(buffer, numBytes) {
 		myPort.pipe(parser);
 		var bytesSent = 0;
 
-
 		parser.on("data", function(data) {
-			console.log("received: " + data);
+			if(verbose > 0) {
+				console.log("received: " + data);
+			}
 			if(data.trim() == "READY") {
 				if(bytesSent < numBytes) {
 					var bytesToSend = Math.min(numBytes - bytesSent, blockSize);
-					console.log("sending next " + bytesToSend + " bytes");
+					if(verbose > 0) {
+						console.log("sending next " + bytesToSend + " bytes");
+					}
 					myPort.write(bytesToSend.toString() + " ");
 					var sliceBuf = buffer.slice(bytesSent, bytesSent + bytesToSend);
 					bytesSent += bytesToSend;
 					myPort.write(sliceBuf);
+					if(verbose == 0) {
+						var progress = Math.floor(100 * bytesSent / numBytes).toString().padStart(2, "0");
+						process.stdout.cursorTo(0);
+						process.stdout.write("transferred " + progress + "% - " + bytesSent + "/" + numBytes);
+					}
 				} else {
-					console.log("We're done here.");
+					console.log(\n"Transfer complete.");
 					myPort.close();
 				}
 			}
@@ -45,7 +55,7 @@ function OpenSerialAndSend(buffer, numBytes) {
 	});
 }
 
-console.log("Requested send on " + targetPort + " with file " + sendFile);
+console.log("Sending " + sendFile + " to EEPROM programmer on " + targetPort);
 fs.open(sendFile, 'r', function(status, fd) {
 	if(status) {
 		console.log("status?");

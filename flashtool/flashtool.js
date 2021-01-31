@@ -105,6 +105,8 @@ function OpenSerialAndDump(outFileStream, startSector, startOffset, numBytes) {
 				confirmStep++;
 				if(argv.eeprom) {
 					myPort.write("mode e\r");
+				} else {
+					myPort.write("mode f\r");
 				}
 				myPort.write("version\r");
 			} else if(confirmStep == 1 && data.trim().substring(0,7) == "GTCP2-0") {

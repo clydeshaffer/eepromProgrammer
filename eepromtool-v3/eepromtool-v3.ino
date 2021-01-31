@@ -12,6 +12,7 @@
 
 #include <string.h>
 #include <SimpleSerialShell.h>
+#include <CRC32.h>
 
 #define MODE_EEPROM 0
 #define MODE_FLASH 1
@@ -25,7 +26,7 @@ void set_address(unsigned int x) {
   unsigned char addr_low = x & 0xFF;
   unsigned char addr_high = (x >> 8) & 0xFF;
   PORTA = addr_low;
-  
+
   addr_high &= 0x7F;
   PORTC = addr_high;
 }
@@ -40,9 +41,16 @@ void shift_bank(unsigned char banknum) {
   lastBankNum = banknum;
 }
 
+void set_long_address(unsigned long x) {
+  if (x != lastBankNum) {
+    shift_bank((x >> 14) & 0x7F);
+  }
+  set_address(x & 0x3FFF);
+}
+
 unsigned long wait_for_ready() {
   unsigned long waiting_count = 0;
-  while(digitalRead(ReadyPin) == LOW) {
+  while (digitalRead(ReadyPin) == LOW) {
     waiting_count++;
   }
   return waiting_count;
@@ -63,8 +71,17 @@ void write_data(unsigned char data) {
   //set the data pins and strobe Write Enable LOW
   PORTL = data;
   DDRL = 0xFF;
+  if (program_mode == MODE_EEPROM) {
+    delayMicroseconds(1);
+  }
   digitalWrite(WriteEnablePin, LOW);
+  if (program_mode == MODE_EEPROM) {
+    delayMicroseconds(1);
+  }
   digitalWrite(WriteEnablePin, HIGH);
+  if (program_mode == MODE_EEPROM) {
+    delayMicroseconds(1);
+  }
   PORTL = 0x00;
   DDRL = 0x00;
 }
@@ -84,6 +101,14 @@ void flash_cmd_chip_erase() {
   write_to(0xAAA, 0x80);
   flash_cmd_unlock();
   write_to(0xAAA, 0x10);
+}
+
+void flash_cmd_sector_erase(unsigned char sa) {
+  shift_bank(sa >> 1);
+  flash_cmd_unlock();
+  write_to(0xAAA, 0x80);
+  flash_cmd_unlock();
+  write_to((sa & 1) << 13, 0x30);
 }
 
 void flash_cmd_program_to(unsigned int addr, unsigned char data) {
@@ -109,9 +134,9 @@ void flash_cmd_unlock_bypass_reset() {
 }
 
 void print_mode() {
-  if(program_mode == MODE_EEPROM) {
+  if (program_mode == MODE_EEPROM) {
     Serial.print("EEPROM");
-  } else if(program_mode == MODE_FLASH) {
+  } else if (program_mode == MODE_FLASH) {
     Serial.print("FLASH");
   } else {
     Serial.print("UNDEFINED");
@@ -120,7 +145,7 @@ void print_mode() {
 
 //Shell commands start
 int cmd_readAt(int argc, char **argv) {
-  if(argc < 2) {
+  if (argc < 2) {
     return 0;
   }
   unsigned int addr = strtol(argv[1], NULL, 16);
@@ -129,22 +154,47 @@ int cmd_readAt(int argc, char **argv) {
   return 0;
 }
 
-int cmd_eraseChip(int argc, char **argv) {
-  Serial.println("Starting chip erase...");
-  flash_cmd_chip_erase();
-  unsigned long cnt = wait_for_ready();
-  Serial.print("Done ");
-  Serial.println(cnt);
+int cmd_dump(int argc, char **argv) {
+  if (argc < 3) {
+    return 0;
+  }
+  unsigned long full_address = strtol(argv[1], NULL, 16);
+  unsigned long full_span = strtol(argv[2], NULL, 16);
+  for (unsigned long il = 0; il < full_span; il++) {
+    set_long_address(full_address + il);
+    Serial.write(read_data());
+  }
+  Serial.end();
   return 0;
 }
 
+int cmd_eraseChip(int argc, char **argv) {
+  Serial.println("Starting chip erase...");
+  flash_cmd_chip_erase();
+  wait_for_ready();
+  Serial.println("Done");
+  return 0;
+}
+
+int cmd_eraseSector(int argc, char **argv) {
+  if (argc < 2) {
+    return 0;
+  }
+  unsigned char sector_addr = strtol(argv[1], NULL, 16);
+  Serial.print("Erasing sector $");
+  Serial.println(sector_addr, HEX);
+  flash_cmd_sector_erase(sector_addr);
+  wait_for_ready();
+  Serial.println("Done");
+}
+
 int cmd_writeTo(int argc, char **argv) {
-  if(argc < 3) {
+  if (argc < 3) {
     return 0;
   }
   unsigned int addr = strtol(argv[1], NULL, 16);
   unsigned int data = strtol(argv[2], NULL, 16);
-  if(program_mode == MODE_FLASH) {
+  if (program_mode == MODE_FLASH) {
     Serial.print("Writing $");
     Serial.print((unsigned char) data, HEX);
     Serial.print(" to $");
@@ -160,19 +210,19 @@ int cmd_writeTo(int argc, char **argv) {
 }
 
 int cmd_shift(int argc, char **argv) {
-  if(argc < 2) {
+  if (argc < 2) {
     return 0;
   }
   unsigned char addr = strtol(argv[1], NULL, 16);
-  shift_bank(addr); 
+  shift_bank(addr);
   return 0;
 }
 
 int cmd_mode(int argc, char **argv) {
-  if(argc > 1) {
-    if(argv[1][0] == 'e' || argv[1][0] == 'E') {
+  if (argc > 1) {
+    if (argv[1][0] == 'e' || argv[1][0] == 'E') {
       program_mode = MODE_EEPROM;
-    } else if(argv[1][0] == 'f' || argv[1][0] == 'F') {
+    } else if (argv[1][0] == 'f' || argv[1][0] == 'F') {
       program_mode = MODE_FLASH;
     } else {
       Serial.println("Unknown mode specified");
@@ -197,19 +247,32 @@ int cmd_reset(int argc, char **argv) {
 unsigned char fileBuf[4096];
 
 int cmd_writeMulti(int argc, char **argv) {
-  if(argc < 3) {
+  if (argc < 3) {
     return 0;
   }
   unsigned int addr = strtol(argv[1], NULL, 16);
   unsigned int count = strtol(argv[2], NULL, 16);
   unsigned int actualBytesCount = Serial.readBytes(fileBuf, count);
-  flash_cmd_unlock_bypass();
-  for(int i = 0; i < actualBytesCount; i++) {
-    flash_cmd_bypass_write_to(addr, fileBuf[i]);
-    addr++;
+  if (program_mode == MODE_FLASH) {
+    flash_cmd_unlock_bypass();
+    for (int i = 0; i < actualBytesCount; i++) {
+      flash_cmd_bypass_write_to(addr, fileBuf[i]);
+      addr++;
+    }
+    flash_cmd_unlock_bypass_reset();
+  } else {
+    for (int i = 0; i < actualBytesCount; i++) {
+      write_to(addr, fileBuf[i]);
+      while (read_data() != fileBuf[i]) {
+        write_to(addr, fileBuf[i]);
+        delay(1);
+      }
+      addr++;
+      delay(1);
+      wait_for_ready();
+    }
   }
-  flash_cmd_unlock_bypass_reset();
-  while(Serial.available() > 0) {
+  while (Serial.available() > 0) {
     char k = Serial.read();
   }
   Serial.print("ACK");
@@ -217,8 +280,25 @@ int cmd_writeMulti(int argc, char **argv) {
   return 0;
 }
 
+CRC32 crc;
+int cmd_checksum(int argc, char **argv) {
+  if (argc < 3) {
+    return 0;
+  }
+  unsigned long addr = strtol(argv[1], NULL, 16);
+  unsigned long count = strtol(argv[2], NULL, 16);
+  crc.reset();
+  for (unsigned long i = 0; i < count; i++) {
+    set_long_address(addr);
+    crc.update(read_data());
+    addr++;
+  }
+  Serial.print("CRC32: ");
+  Serial.println(crc.finalize(), HEX);
+}
+
 int cmd_timeout(int argc, char **argv) {
-  if(argc < 2) {
+  if (argc < 2) {
     return 0;
   }
   unsigned int timeout_milliseconds = strtol(argv[1], NULL, 10);
@@ -227,31 +307,31 @@ int cmd_timeout(int argc, char **argv) {
 }
 
 int cmd_readString(int argc, char **argv) {
-  if(argc < 2) {
+  if (argc < 2) {
     return 0;
   }
   unsigned int addr = strtol(argv[1], NULL, 16);
   unsigned int limit = 80;
-  if(argc >= 3) {
+  if (argc >= 3) {
     limit = strtol(argv[2], NULL, 16);
   }
-  while(limit > 0) {
+  while (limit > 0) {
     limit --;
     set_address(addr);
     char letter = read_data();
-    if(isprint(letter)) {
+    if (isprint(letter)) {
       Serial.print(letter);
     } else {
       limit = 0;
     }
-    addr ++; 
+    addr ++;
   }
   Serial.println();
   return 0;
 }
 
 int cmd_version(int argc, char **argv) {
-  Serial.println("GTCP2-0.0.1");
+  Serial.println("GTCP2-0.0.2");
   return 0;
 }
 //Shell commands end
@@ -274,7 +354,7 @@ void setup() {
   digitalWrite(SCKPin, LOW);
   digitalWrite(MOSIPin, LOW);
   digitalWrite(SSPin, HIGH);
-  
+
   pinMode(OutputEnablePin, OUTPUT);
   pinMode(WriteEnablePin, OUTPUT);
   pinMode(ResetPin, OUTPUT);
@@ -297,16 +377,19 @@ void setup() {
   digitalWrite(ResetPin, HIGH);
   wait_for_ready();
 
-  shell.addCommand(F("readAt"),cmd_readAt);
-  shell.addCommand(F("eraseChip"),cmd_eraseChip);
-  shell.addCommand(F("writeTo"),cmd_writeTo);
-  shell.addCommand(F("shift"),cmd_shift);
-  shell.addCommand(F("mode"),cmd_mode);
-  shell.addCommand(F("reset"),cmd_reset);
-  shell.addCommand(F("writeMulti"),cmd_writeMulti);
-  shell.addCommand(F("timeout"),cmd_timeout);
-  shell.addCommand(F("readString"),cmd_readString);
-  shell.addCommand(F("version"),cmd_version);
+  shell.addCommand(F("readAt"), cmd_readAt);
+  shell.addCommand(F("dump"), cmd_dump);
+  shell.addCommand(F("eraseChip"), cmd_eraseChip);
+  shell.addCommand(F("eraseSector"), cmd_eraseSector);
+  shell.addCommand(F("writeTo"), cmd_writeTo);
+  shell.addCommand(F("shift"), cmd_shift);
+  shell.addCommand(F("mode"), cmd_mode);
+  shell.addCommand(F("reset"), cmd_reset);
+  shell.addCommand(F("writeMulti"), cmd_writeMulti);
+  shell.addCommand(F("checksum"), cmd_checksum);
+  shell.addCommand(F("timeout"), cmd_timeout);
+  shell.addCommand(F("readString"), cmd_readString);
+  shell.addCommand(F("version"), cmd_version);
 
   Serial.print("Starting in ");
   print_mode();

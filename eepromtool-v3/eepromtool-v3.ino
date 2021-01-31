@@ -48,12 +48,9 @@ void set_long_address(unsigned long x) {
   set_address(x & 0x3FFF);
 }
 
-unsigned long wait_for_ready() {
-  unsigned long waiting_count = 0;
+void wait_for_ready() {
   while (digitalRead(ReadyPin) == LOW) {
-    waiting_count++;
   }
-  return waiting_count;
 }
 
 unsigned char read_data() {
@@ -200,8 +197,8 @@ int cmd_writeTo(int argc, char **argv) {
     Serial.print(" to $");
     Serial.println(addr, HEX);
     flash_cmd_program_to(addr, (unsigned char) data);
-    Serial.print(wait_for_ready());
-    Serial.println("... Done");
+    wait_for_ready();
+    Serial.println("Done");
     return 0;
   } else {
     write_to(addr, (unsigned char) data);
@@ -334,6 +331,99 @@ int cmd_version(int argc, char **argv) {
   Serial.println("GTCP2-0.0.2");
   return 0;
 }
+
+bool user_confirm() {
+  char c;
+  while(1) {
+    while(Serial.available() == 0) {}
+    char c = Serial.read();
+    while(Serial.available() > 0) {
+      Serial.read();
+    }
+    if(c == 'y') {
+      return true;
+    }
+    if(c == 'n') {
+      return false;
+    }
+    
+    if(c == '\r') {
+      Serial.println("Please enter 'y' or 'n'");
+    }
+  }
+}
+
+#define EXPECT(x) if(!(x)){Serial.println("FAIL");return -1;}
+//Run test suite for newly assembled flash carts
+int cmd_test(int argc, char **argv) {
+  Serial.println("Test suite for newly assembled flash boards!");
+  Serial.println("This will erase any stored data. Are you sure you wish to continue? (y/n)");
+  if(!user_confirm()) {
+    Serial.println("Test canceled.");
+    return 0;
+  }
+  Serial.println("Starting tests...");
+  Serial.println();
+  shift_bank(0);
+  //Chip Erase test
+  Serial.print("\tChip erase: ");
+  float readyTime = 0;
+  flash_cmd_chip_erase();
+  EXPECT(digitalRead(ReadyPin)==LOW)
+  while(digitalRead(ReadyPin)==LOW){
+    delay(100);
+    readyTime += 0.1f;
+    EXPECT(readyTime<20)
+  }
+  EXPECT(readyTime>1)
+  set_address(0x0000);
+  EXPECT(read_data()==0xFF)
+  set_address(0xFFFF);
+  EXPECT(read_data()==0xFF)
+  set_address(0xCAFE);
+  EXPECT(read_data()==0xFF)
+  Serial.println("PASS");
+
+  //Write/read test
+  Serial.print("\tWrite/read: ");
+  flash_cmd_program_to(0x0000, 0x55);
+  set_address(0x0000);
+  EXPECT(read_data()==0x55)
+  flash_cmd_program_to(0x1000, 0x00);
+  set_address(0x1000);
+  EXPECT(read_data()==0x00)
+  Serial.println("PASS");
+
+  Serial.print("\tShift register: ");
+  shift_bank(1);
+  set_address(0x0000);
+  EXPECT(read_data()==0xFF)
+  flash_cmd_program_to(0x0000, 0xAA);
+  set_address(0x0000);
+  EXPECT(read_data()==0xAA)
+  set_address(0xC000);
+  EXPECT(read_data()==0xFF)
+  shift_bank(0x7F);
+  set_address(0x0000);
+  EXPECT(read_data()==0xFF)
+  flash_cmd_program_to(0x0000, 0x00);
+  set_address(0x0000);
+  EXPECT(read_data()==0x00)
+  set_address(0xC000);
+  EXPECT(read_data()==0x00)
+  Serial.println("PASS");
+  
+  Serial.println();
+  Serial.println("All tests passed.");
+  Serial.println("Cleaning up with one last chip erase...");
+  flash_cmd_chip_erase();
+  wait_for_ready();
+  while(Serial.available() > 0) {
+    Serial.read();
+  }
+  Serial.println("Done!");
+  return 0;
+}
 //Shell commands end
 
 void setup() {
@@ -390,7 +480,7 @@ void setup() {
   shell.addCommand(F("timeout"), cmd_timeout);
   shell.addCommand(F("readString"), cmd_readString);
   shell.addCommand(F("version"), cmd_version);
-
+  shell.addCommand(F("test"), cmd_test);
   Serial.print("Starting in ");
   print_mode();
   Serial.println(" mode");

@@ -42,7 +42,7 @@ void shift_bank(unsigned char banknum) {
 }
 
 void set_long_address(unsigned long x) {
-  if (x != lastBankNum) {
+  if ((x >> 14) & 0x7F != lastBankNum) {
     shift_bank((x >> 14) & 0x7F);
   }
   set_address(x & 0x3FFF);

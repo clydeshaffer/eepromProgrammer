@@ -1,5 +1,6 @@
 var SerialPort = require('serialport');
 var fs = require('fs');
+var readline = require('readline');
 const { type } = require('os');
 var argv = require('minimist')(process.argv.slice(2));
 
@@ -19,7 +20,7 @@ var chunkParser = new SerialPort.parsers.ByteLength({
 });
 
 function SerialConnect(andThen) {
-	SerialPort.list(function(err, ports) {
+	SerialPort.list().then((ports) => {
 		var portExists = ports.some(port => port.comName == targetPort);
 		if(portExists) {
 			console.log(targetPort + " exists.");
@@ -52,7 +53,7 @@ function OpenSerialAndSend(buffer, startSector, startOffset, numBytes) {
 				}
 				myPort.write(sliceBuf);
 				var progress = Math.floor(100 * bytesSent / numBytes).toString().padStart(2, "0");
-				process.stdout.cursorTo(0);
+				readline.cursorTo(process.stdout, 0);
 				process.stdout.write("transferred " + progress + "% - " + bytesSent + "/" + numBytes);
 			} else {
 				console.log("\nTransfer complete.");

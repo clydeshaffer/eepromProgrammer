@@ -458,7 +458,7 @@ void setup() {
 
   shift_bank(lastBankNum);
 
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("Hello world");
   shell.attach(Serial);
 

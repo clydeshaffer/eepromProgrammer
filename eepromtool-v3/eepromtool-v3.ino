@@ -42,8 +42,8 @@ void shift_bank(unsigned char banknum) {
 }
 
 void set_long_address(unsigned long x) {
-  if ((x >> 14) & 0x7F != lastBankNum) {
-    shift_bank((x >> 14) & 0x7F);
+  if ((x >> 14) & 0xFF != lastBankNum) {
+    shift_bank((x >> 14) | 0x80);
   }
   set_address(x & 0x3FFF);
 }
@@ -94,6 +94,7 @@ void flash_cmd_unlock() {
 }
 
 void flash_cmd_chip_erase() {
+  shift_bank(0xff);
   flash_cmd_unlock();
   write_to(0xAAA, 0x80);
   flash_cmd_unlock();
@@ -286,7 +287,7 @@ int cmd_checksum(int argc, char **argv) {
   unsigned long count = strtol(argv[2], NULL, 16);
   crc.reset();
   for (unsigned long i = 0; i < count; i++) {
-    set_long_address(addr);
+    set_address(addr & 0xFFFF);
     crc.update(read_data());
     addr++;
   }
@@ -353,7 +354,7 @@ bool user_confirm() {
   }
 }
 
-#define EXPECT(x) if(!(x)){Serial.println("FAIL");return -1;}
+#define EXPECT(x) if(!(x)){Serial.print("FAIL - ");Serial.print(#x);Serial.print(" on line ");Serial.println(__LINE__);return -1;}
 //Run test suite for newly assembled flash carts
 int cmd_test(int argc, char **argv) {
   Serial.println("Test suite for newly assembled flash boards!");
@@ -364,7 +365,6 @@ int cmd_test(int argc, char **argv) {
   }
   Serial.println("Starting tests...");
   Serial.println();
-  shift_bank(0);
   //Chip Erase test
   Serial.print("\tChip erase: ");
   float readyTime = 0;
@@ -386,6 +386,7 @@ int cmd_test(int argc, char **argv) {
 
   //Write/read test
   Serial.print("\tWrite/read: ");
+  shift_bank(0x80);
   flash_cmd_program_to(0x0000, 0x55);
   set_address(0x0000);
   EXPECT(read_data()==0x55)
@@ -395,15 +396,15 @@ int cmd_test(int argc, char **argv) {
   Serial.println("PASS");
 
   Serial.print("\tShift register: ");
-  shift_bank(1);
-  set_address(0x0000);
+  shift_bank(0x81);
+  set_address(0x8000);
   EXPECT(read_data()==0xFF)
-  flash_cmd_program_to(0x0000, 0xAA);
-  set_address(0x0000);
+  flash_cmd_program_to(0x8000, 0xAA);
+  set_address(0x8000);
   EXPECT(read_data()==0xAA)
   set_address(0xC000);
   EXPECT(read_data()==0xFF)
-  shift_bank(0x7F);
+  shift_bank(0xFF);
   set_address(0x0000);
   EXPECT(read_data()==0xFF)
   flash_cmd_program_to(0x0000, 0x00);

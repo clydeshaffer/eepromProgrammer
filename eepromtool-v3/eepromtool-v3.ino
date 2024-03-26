@@ -49,7 +49,12 @@ void set_long_address(unsigned long x) {
 }
 
 void wait_for_ready() {
-  while (digitalRead(ReadyPin) == LOW) {
+  unsigned char a, b;
+  a = read_data();
+  b = read_data();
+  while(a != b) {
+    a = b;
+    b = read_data();
   }
 }
 

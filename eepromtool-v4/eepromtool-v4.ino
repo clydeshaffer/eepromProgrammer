@@ -387,7 +387,7 @@ int cmd_readString(int argc, char **argv) {
 }
 
 int cmd_version(int argc, char **argv) {
-  Serial.println("GTCP2-0.0.2");
+  Serial.println("GTCP2-0.0.3");
   return 0;
 }
 

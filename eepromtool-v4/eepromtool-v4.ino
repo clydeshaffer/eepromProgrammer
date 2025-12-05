@@ -25,8 +25,10 @@
 
 #define MODE_EEPROM 0
 #define MODE_FLASH 1
+#define MODE_FASTFLASH 2
 
 int program_mode = MODE_FLASH;
+int shift_mode = MSBFIRST;
 
 void set_address(unsigned int x) {
   //set pins corresponding to A0-A15 to the value of x
@@ -42,11 +44,22 @@ void set_address(unsigned int x) {
 
 unsigned char lastBankNum = 0x7F;
 void shift_bank(unsigned char banknum) {
-  //Flash cartridge uses a shift register to set high address pins
-  //This uses the low 7 bits of banknum
-  digitalWriteFast(SSPin, LOW);
-  shiftOut(MOSIPin, SCKPin, MSBFIRST, banknum);
-  digitalWriteFast(SSPin, HIGH);
+  if(program_mode == MODE_FLASH) {
+    //Flash cartridge uses a shift register to set high address pins
+    //This uses the low 7 bits of banknum
+    digitalWriteFast(SSPin, LOW);
+    if(shift_mode == LSBFIRST) {
+      shiftOut(MOSIPin, SCKPin, shift_mode, banknum<<1);
+    } else {
+      shiftOut(MOSIPin, SCKPin, shift_mode, banknum);
+    }
+    digitalWriteFast(SSPin, HIGH);
+  } else if(program_mode == MODE_FASTFLASH) {
+    set_address(banknum << 4);
+    digitalWriteFast(SSPin, LOW);
+    digitalWriteFast(SSPin, HIGH);
+    digitalWriteFast(SSPin, LOW);
+  }
   lastBankNum = banknum;
 }
 
@@ -150,6 +163,18 @@ void print_mode() {
     Serial.print("EEPROM");
   } else if (program_mode == MODE_FLASH) {
     Serial.print("FLASH");
+  } else if (program_mode == MODE_FASTFLASH) {
+    Serial.print("FASTBANK-FLASH");
+  } else {
+    Serial.print("UNDEFINED");
+  }
+}
+
+void print_shift_mode() {
+  if (shift_mode == MSBFIRST) {
+    Serial.print("MSB First");
+  } else if (program_mode == LSBFIRST) {
+    Serial.print("LSB First");
   } else {
     Serial.print("UNDEFINED");
   }
@@ -207,7 +232,7 @@ int cmd_writeTo(int argc, char **argv) {
   }
   unsigned int addr = strtol(argv[1], NULL, 16);
   unsigned int data = strtol(argv[2], NULL, 16);
-  if (program_mode == MODE_FLASH) {
+  if ((program_mode == MODE_FLASH) || (program_mode == MODE_FASTFLASH)) {
     Serial.print("Writing $");
     Serial.print((unsigned char)data, HEX);
     Serial.print(" to $");
@@ -247,6 +272,22 @@ int cmd_mode(int argc, char **argv) {
   return 0;
 }
 
+int cmd_shift_mode(int argc, char **argv) {
+  if (argc > 1) {
+    if (argv[1][0] == 'l' || argv[1][0] == 'L') {
+      shift_mode = LSBFIRST;
+    } else if (argv[1][0] == 'm' || argv[1][0] == 'M') {
+      shift_mode = MSBFIRST;
+    } else {
+      Serial.println("Unknown mode specified");
+    }
+  }
+  Serial.print("Current mode is ");
+  print_shift_mode();
+  Serial.println();
+  return 0;
+}
+
 int cmd_reset(int argc, char **argv) {
   Serial.println("Resetting...");
   digitalWriteFast(ResetPin, LOW);
@@ -266,7 +307,7 @@ int cmd_writeMulti(int argc, char **argv) {
   unsigned int addr = strtol(argv[1], NULL, 16);
   unsigned int count = strtol(argv[2], NULL, 16);
   unsigned int actualBytesCount = Serial.readBytes(fileBuf, count);
-  if (program_mode == MODE_FLASH) {
+  if ((program_mode == MODE_FLASH) || (program_mode == MODE_FASTFLASH)) {
     flash_cmd_unlock_bypass();
     for (unsigned int i = 0; i < actualBytesCount; i++) {
       flash_cmd_bypass_write_to(addr, fileBuf[i]);
@@ -500,6 +541,7 @@ void setup() {
   shell.addCommand(F("writeTo"), cmd_writeTo);
   shell.addCommand(F("shift"), cmd_shift);
   shell.addCommand(F("mode"), cmd_mode);
+  shell.addCommand(F("shiftmode"), cmd_shift_mode);
   shell.addCommand(F("reset"), cmd_reset);
   shell.addCommand(F("writeMulti"), cmd_writeMulti);
   shell.addCommand(F("checksum"), cmd_checksum);
